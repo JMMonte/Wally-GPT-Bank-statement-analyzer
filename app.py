@@ -1,233 +1,152 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import numpy as np
 import plotly.express as px
-import datetime as dt
-import plotly.graph_objects as go
-import plotly.express as px
-import chardet
+import plotly.graph_objs as go
+from datetime import datetime
 import re
-import io
+import chardet
 
-def calculate_monthly_budget(df, selected_columns):
-    now = dt.datetime.now()
-    start_of_month = dt.datetime(now.year, now.month, 1)
+class FinancialApp:
 
-    df = df[df[selected_columns["date"]] >= start_of_month]
+    def __init__(self):
+        self.data = None
+        self.delimiter = ';'
+        self.date_column = None
+        self.debit_column = None
+        self.credit_column = None
+        self.balance_column = None
+        self.category_column = None
+        self.date_format = '%d-%b-%Y'
+        self.file = None
 
-    income = df[df[selected_columns["credit"]].notna()][selected_columns["credit"]].sum()
-    expenses = df[df[selected_columns["debit"]].notna()][selected_columns["debit"]].sum()
-    monthly_budget = income - expenses
-    return monthly_budget
+    def get_encoding(self, file):
+        """Detect the encoding of a file."""
+        result = chardet.detect(file.read())
+        return result['encoding']
 
-def plot_cumulative_totals_by_category(df, selected_columns):
-    df = df.set_index(selected_columns["date"])
-    df.sort_index(inplace=True)
+    def read_csv(self, file, delimiter, encoding):
+        """Read a CSV file with the specified delimiter and encoding."""
+        file.seek(0)
+        return pd.read_csv(file, delimiter=delimiter, encoding=encoding)
 
-    categories = df[selected_columns["category"]].unique()
-
-    cat_dfs = []
-    for category in categories:
-        cat_df = df[df[selected_columns["category"]] == category]
-        cum_debits = cat_df[selected_columns["debit"]].cumsum()
-        cum_credits = cat_df[selected_columns["credit"]].cumsum()
-        cat_cumulative_totals = pd.concat([cum_debits, cum_credits], axis=1)
-        cat_cumulative_totals.columns = ["Cumulative Debits", "Cumulative Credits"]
-        cat_cumulative_totals["Category"] = category
-        cat_dfs.append(cat_cumulative_totals)
-
-    cumulative_totals = pd.concat(cat_dfs, axis=0)
-    cumulative_totals.reset_index(inplace=True)
-
-    fig = px.line(cumulative_totals, x=selected_columns["date"], y=["Cumulative Debits", "Cumulative Credits"], color="Category", title="Cumulative Totals by Category")
-    st.plotly_chart(fig)
-
-
-def plot_cumulative_totals(df, selected_columns):
-    df = df.set_index(selected_columns["date"]).fillna(0)
-    df.sort_index(inplace=True)
-
-    df[selected_columns["debit"]] = pd.to_numeric(df[selected_columns["debit"]], errors='coerce')
-    df[selected_columns["credit"]] = pd.to_numeric(df[selected_columns["credit"]], errors='coerce')
-
-    df["Cumulative Debits"] = df[selected_columns["debit"]].cumsum()
-    df["Cumulative Credits"] = df[selected_columns["credit"]].cumsum()
-
-    fig = px.line(df[["Cumulative Debits","Cumulative Credits"]], title="Cumulative Totals")
-    # fig.add_scatter(x=df.index, y=cum_debits, mode="lines", name="Cumulative Debits")
-    # fig.add_scatter(x=df.index, y=cum_credits, mode="lines", name="Cumulative Credits")
-    st.plotly_chart(fig)
-
-
-def read_bank_statement(file, selected_columns, encoding):
-    try:
-        df = pd.read_csv(file, sep=";", skiprows=5, encoding=encoding, header=0)
-    except Exception as e:
-        st.error(f"Error reading CSV file: {e}")
-        return None
+    def detect_headers(self):
+        """Detect the headers of the CSV file."""
+        return list(self.data.columns)
     
-    st.write(df.head())
-    df.dropna(how='all', inplace=True)
-    
-    if selected_columns["date"] not in df.columns or selected_columns["debit"] not in df.columns or selected_columns["credit"] not in df.columns or selected_columns["category"] not in df.columns:
-        st.error("One or more selected columns do not exist in the CSV file.")
-        return None
+    def process_data(self):
+        """Process the data in the CSV file."""
+        self.data[self.date_column] = pd.to_datetime(self.data[self.date_column], format=self.date_format)
+        self.data[self.debit_column] = self.data[self.debit_column].apply(self.clean_number)
+        self.data[self.credit_column] = self.data[self.credit_column].apply(self.clean_number)
+        self.data[self.balance_column] = self.data[self.balance_column].apply(self.clean_number)
+        self.show_summary()
 
-    df[selected_columns["date"]] = pd.to_datetime(df[selected_columns["date"]], format=selected_columns["date_format"], errors='coerce')
-    df.dropna(subset=[selected_columns["date"]], inplace=True)
-    
-    try:
-        df[selected_columns["debit"]] = pd.to_numeric(df[selected_columns["debit"]].str.replace(re.escape(selected_columns["thousands_separator"]), '').str.replace(re.escape(selected_columns["decimal_separator"]), '.'))
-        df[selected_columns["credit"]] = pd.to_numeric(df[selected_columns["credit"]].str.replace(re.escape(selected_columns["thousands_separator"]), '').str.replace(re.escape(selected_columns["decimal_separator"]), '.'))
-    except Exception as e:
-        st.error(f"Error converting debit or credit columns to numeric: {e}")
-        return None
+    def clean_number(self, num):
+        """Clean a number string by removing non-numeric characters and converting it to a float."""
+        try:
+            num = re.sub(r'[^\d\.,]', '', str(num))
+            return float(num.replace('.', '').replace(',', '.'))
+        except ValueError:
+            return np.nan
 
-    return df
+    def run(self):
+        """Run the financial analysis app."""
+        with st.sidebar:
+            st.title("Financial Analysis App")
+            self.delimiter = st.text_input("Delimiter (default ';')", value=";")
+            self.file = st.file_uploader("Upload your CSV file", type=['csv'])
 
+        if self.file is not None:
+            try:
+                encoding = self.get_encoding(self.file)
+                self.data = self.read_csv(self.file, self.delimiter, encoding)
 
-def categorize_expenses(df, selected_columns):
-    expenses_by_category = df.groupby(selected_columns["category"])[selected_columns["debit"]].sum().reset_index()
-    expenses_by_category.columns = ["Category", "Total Expenses"]
-    expenses_by_category["Total Expenses"] = expenses_by_category["Total Expenses"].astype(str)
-    return expenses_by_category
+                
+                headers = self.detect_headers()
+                with st.sidebar:
+                    st.subheader("Match columns")
+                    self.date_column = st.selectbox("Select date column", headers)
+                    self.debit_column = st.selectbox("Select debit (expenses) column", headers)
+                    self.credit_column = st.selectbox("Select credit (earnings) column", headers)
+                    self.balance_column = st.selectbox("Select balance column", headers)
+                    self.category_column = st.selectbox("Select category column", headers)
+                    self.savings = st.number_input("Savings per month", value=1000, step=1000)
 
+                    self.date_format = st.text_input("Date format (default '%d-%m-%Y')", value='%d-%m-%Y')
+                    process = st.button("Process")
 
-def calculate_monthly_budget(df, selected_columns):
-    try:
-        income = df[df[selected_columns["credit"]].notna()][selected_columns["credit"]].sum()
-        expenses = df[df[selected_columns["debit"]].notna()][selected_columns["debit"]].sum()
-        monthly_budget = income - expenses
-    except Exception as e:
-        st.error(f"Error calculating monthly budget: {e}")
-        return None
+                if process:
+                    self.process_data()
 
-    return monthly_budget
+            except Exception as e:
+                with st.sidebar:
+                    st.write("Error: ", e)
+                
+    def show_summary(self):
+        """Show a summary of the financial data."""
+        st.subheader("Summary")
 
-def recommend_salary_range(monthly_budget):
-    min_salary = monthly_budget * 12 * 1.2
-    max_salary = monthly_budget * 12 * 1.5
-    return min_salary, max_salary
+        current_month = datetime.now().strftime("%Y-%m")
+        current_month_data = self.data[self.data[self.date_column].dt.to_period('M') == current_month]
+        earnings = current_month_data[self.credit_column].sum()
+        expenses = current_month_data[self.debit_column].sum()
+        balance = earnings - expenses
 
-def process_input_text(text, selected_columns):
-    try:
-        df = pd.read_csv(io.StringIO(text), sep=";", skiprows=4, encoding='utf-8-sig')
-    except Exception as e:
-        st.error(f"Error processing input text: {e}")
-        return None
-    
-    df.dropna(how='all', inplace=True)
-    
-    if selected_columns["date"] not in df.columns or selected_columns["debit"] not in df.columns or selected_columns["credit"] not in df.columns or selected_columns["category"] not in df.columns:
-        st.error("One or more selected columns do not exist in the input text.")
-        return None
-    
-    try:
-        df[selected_columns["date"]] = pd.to_datetime(df[selected_columns["date"]], format=selected_columns["date_format"])
-        df[selected_columns["debit"]] = pd.to_numeric(df[selected_columns["debit"]].str.replace(selected_columns["thousands_separator"], '').str.replace(selected_columns["decimal_separator"], '.'))
-        df[selected_columns["credit"]] = pd.to_numeric(df[selected_columns["credit"]].str.replace(selected_columns["thousands_separator"], '').str.replace(selected_columns["decimal_separator"], '.'))
-    except Exception as e:
-        st.error(f"Error converting columns to appropriate data types: {e}")
-        return None
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(value=f"{current_month}", label="Current Month")
+        with col2:
+            st.metric(value=f"${earnings:,.2f}", label="Earnings")
+        with col3:
+            st.metric(value=f"${expenses:,.2f}", label="Expenses")
+        with col4:
+            st.metric(value=f"${balance:,.2f}", label="Balance")
+        
+        # Recommended salary calculator
+        avg_expenses = self.data[self.debit_column].mean() * 30  # Assuming 30 days per month
+        
+        st.write("How much would you like to save each month?")
+        coli1, coli2 = st.columns(2)
+        with coli1:
+            st.metric(value=f"${avg_expenses:,.2f}", label="Average daily Expenses")
+        with coli2:
+            
+            recommended_salary = avg_expenses + self.savings  # Assuming a 25% buffer
+            st.metric(value=f"${recommended_salary:,.2f}", delta=f"{self.savings / avg_expenses * 100:,.2f}%" , label="Recommended Salary")
 
-    return df
+        self.show_charts()
 
-def select_columns(df):
-    if 'selected_columns' not in st.session_state:
-        st.session_state.selected_columns = {}
+    def show_charts(self):
+        """Show charts of the financial data."""
+        st.subheader("Charts")
+        # Line chart of cumulative earnings and spending
+        fig1 = go.Figure()
 
-    st.subheader("Sample Bank Statement")
-    st.write("Here's a sample of your bank statement to help you select the correct columns. Choose below the columns that correspond to the date, debit, credit, and category of each transaction.")
+        # add a trace for earnings
+        fig1.add_trace(go.Bar(x=self.data[self.date_column], y=self.data[self.credit_column], name='Earnings', marker=dict(color='green')))
+        # add a trace for expenses
+        fig1.add_trace(go.Bar(x=self.data[self.date_column], y=self.data[self.debit_column], name='Expenses', marker=dict(color='red')))
+        # add a trace for the balance
+        fig1.add_trace(go.Line(x=self.data[self.date_column], y=self.data[self.balance_column], name='Balance', marker=dict(color='blue')))
 
-    columns = list(df.columns)
+        # set the layout for the legend
+        fig1.update_layout(showlegend=True, legend=dict(title=dict(text='Legend'), orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1))
 
-    selected_cols = {}
-    date_column = st.selectbox("Select the date column:", options=columns)
-    debit_column = st.selectbox("Select the debit column:", options=columns)
-    credit_column = st.selectbox("Select the credit column:", options=columns)
-    category_column = st.selectbox("Select the category column:", options=columns)
-    date_format = st.text_input("Date format (e.g., '%d-%m-%Y')", "%d-%m-%Y")
-    decimal_separator = st.text_input("Decimal separator (e.g., ',')", ",")
-    thousands_separator = st.text_input("Thousands separator (e.g., '.')", ".")
+        st.plotly_chart(fig1)
 
-    if date_column == debit_column or date_column == credit_column or date_column == category_column or debit_column == credit_column or debit_column == category_column or credit_column == category_column:
-        st.error("Selected columns must be unique.")
-        return
-    
-    st.session_state.selected_columns["date"] = date_column
-    st.session_state.selected_columns["debit"] = debit_column
-    st.session_state.selected_columns["credit"] = credit_column
-    st.session_state.selected_columns["category"] = category_column
-    st.session_state.selected_columns["date_format"] = date_format
-    st.session_state.selected_columns["decimal_separator"] = decimal_separator
-    st.session_state.selected_columns["thousands_separator"] = thousands_separator
+        # Pie chart of expenses per category
+        # Assuming a "Category" column exists in the dataset
+        expenses_by_category = self.data.groupby(self.category_column)[self.debit_column].sum().reset_index()
+        fig2 = px.pie(expenses_by_category, values=self.debit_column, names=self.category_column)
+        st.plotly_chart(fig2)
 
-    st.write(f"Selected columns: {st.session_state.selected_columns}")
+        # Line chart with expenses per category per month
+        expenses_by_category_month = self.data.groupby([self.data[self.date_column].dt.to_period('M'), self.category_column])[self.debit_column].sum().reset_index()
+        expenses_by_category_month[self.date_column] = expenses_by_category_month[self.date_column].astype(str)
+        fig3 = px.line(expenses_by_category_month, x=self.date_column, y=self.debit_column, color=self.category_column)
+        st.plotly_chart(fig3)
 
-st.title("Bank Statement Analyzer")
-
-input_method = st.radio("Choose an input method:", ("Upload CSV File", "Paste CSV Content"))
-
-if input_method == "Upload CSV File":
-    uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
-
-    if uploaded_file:
-        file_bytes = uploaded_file.read()
-        encoding = chardet.detect(file_bytes)['encoding']
-        uploaded_file.seek(0)
-
-        sample_df = pd.read_csv(uploaded_file, sep=";", skiprows=5, encoding=encoding)
-        sample_df.dropna(how='all', inplace=True)
-
-        select_columns(sample_df)
-
-        if st.button("Process"):
-            if all(val is not None for val in st.session_state.selected_columns.values()):
-                uploaded_file.seek(0)
-                df = read_bank_statement(uploaded_file, st.session_state.selected_columns, encoding)
-                if df is not None:
-                    expenses_by_category = categorize_expenses(df, st.session_state.selected_columns)
-                    monthly_budget = calculate_monthly_budget(df, st.session_state.selected_columns)  # Pass selected_columns as an argument
-                    if monthly_budget is not None:
-                        income = df[df[st.session_state.selected_columns["credit"]].notna()][st.session_state.selected_columns["credit"]].sum()
-                        expenses = df[df[st.session_state.selected_columns["debit"]].notna()][st.session_state.selected_columns["debit"]].sum()
-                        min_salary, max_salary = recommend_salary_range(monthly_budget)
-                        st.header("Expenses by Category")
-                        st.write(expenses_by_category)
-                        st.header("Monthly Budget")
-                        st.write(f"Income: €{income:.2f}")
-                        st.write(f"Expenses: €{expenses:.2f}")
-                        st.write(f"Monthly Budget: €{monthly_budget:.2f}")
-                        st.header("Recommended Salary Range")
-                        st.write(f"€{min_salary:.2f} - €{max_salary:.2f}")
-                        fig1 = px.pie(expenses_by_category, values="Total Expenses", names="Category", title="Expenses by Category")
-                        st.plotly_chart(fig1)
-                        plot_cumulative_totals(df, st.session_state.selected_columns)
-                        plot_cumulative_totals_by_category(df, st.session_state.selected_columns)
-            else:
-                st.error("Please make sure all columns are selected before processing.")
-
-elif input_method == "Paste CSV Content":
-    input_text = st.text_area("Paste your bank statement CSV content here")
-
-    if input_text:
-        df = process_input_text(input_text, st.session_state.selected_columns)
-        if df is not None:
-            expenses_by_category = categorize_expenses(df, st.session_state.selected_columns)
-            monthly_budget = calculate_monthly_budget(df, st.session_state.selected_columns)  # Pass selected_columns as an argument
-            if monthly_budget is not None:
-                income = df[df[st.session_state.selected_columns["credit"]].notna()][st.session_state.selected_columns["credit"]].sum()
-                expenses = df[df[st.session_state.selected_columns["debit"]].notna()][st.session_state.selected_columns["debit"]].sum()
-                min_salary, max_salary = recommend_salary_range(monthly_budget)
-                st.header("Expenses by Category")
-                st.write(expenses_by_category)
-                st.header("Monthly Budget")
-                st.write(f"Income: €{income:.2f}")
-                st.write(f"Expenses: €{expenses:.2f}")
-                st.write(f"Monthly Budget: €{monthly_budget:.2f}")
-                st.header("Recommended Salary Range")
-                st.write(f"€{min_salary:.2f} - €{max_salary:.2f}")
-                fig1 = px.pie(expenses_by_category, values="Total Expenses", names="Category", title="Expenses by Category")
-                st.plotly_chart(fig1)
-                plot_cumulative_totals(df, st.session_state.selected_columns)
-                plot_cumulative_totals_by_category(df, st.session_state.selected_columns)
-
+if __name__ == "__main__":
+    app = FinancialApp()
+    app.run()
