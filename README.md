@@ -37,6 +37,7 @@ Finally, you can click the "Process" button to process the data and see the summ
 - numpy
 - plotly
 - chardet
+- openai
 
 ## License
 
