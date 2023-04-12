@@ -7,7 +7,6 @@ To install the required packages, run the following command in your terminal:
 
 ```
 pip install streamlit pandas numpy plotly chardet
-
 ```
 
 
@@ -16,7 +15,6 @@ To run the app, run the following command in your terminal:
 
 ```
 streamlit run app.py
-
 ```
 
 Once the app is running, you can upload a CSV file by using the file uploader in the sidebar. You can also specify the delimiter and date format of your CSV file.
