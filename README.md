@@ -1,6 +1,6 @@
-# Financial Analysis App
+# GPT Bank statement analyzer
 
-This is a simple Streamlit app that reads a CSV file with financial data and performs some analysis on it.
+This is a simple Streamlit app that reads a CSV file with financial data and performs some analysis on it. Optionally it uses GPT-3.5-turbo to generate a series of recomendations and detect standing out data.
 
 ## Installation
 

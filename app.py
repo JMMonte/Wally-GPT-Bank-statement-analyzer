@@ -9,7 +9,7 @@ import re
 import chardet
 import openai
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="GPT Bank statement analyzer", page_icon="🐈", layout="wide")
 
 st.session_state = None
 
